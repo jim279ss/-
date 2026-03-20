@@ -63,7 +63,7 @@ for i, cat in enumerate(WATCHLIST.keys()):
     with tabs[i]:
         tickers = WATCHLIST[cat]
         if not tickers:
-            st.info("請在左側輸入持股代碼 (例如: 2330, 3017)")
+            st.info("請在左側輸入持股代碼")
             continue
             
         summary_data = []
@@ -83,19 +83,14 @@ for i, cat in enumerate(WATCHLIST.keys()):
             except: continue
         
         df_summary = pd.DataFrame(summary_data)
-        
         if not df_summary.empty:
             def color_pct(v):
                 if v > 0: return 'color: #FF0000; font-weight: bold'
                 if v < 0: return 'color: #00AA00; font-weight: bold'
                 return ''
-            
             st.dataframe(df_summary.style.applymap(color_pct, subset=['漲跌幅(%)']), use_container_width=True, hide_index=True)
             selected_stock_in_tab = st.selectbox(f"選擇分析標的 ({cat})", tickers, format_func=lambda x: f"{x} {get_stock_name(x)}", key=f"sb_{cat}")
-            if selected_stock_in_tab:
-                selected_stock = selected_stock_in_tab
-        else:
-            st.warning("查無資料，請確認代碼是否正確。")
+            if selected_stock_in_tab: selected_stock = selected_stock_in_tab
 
 # --- 5. 詳細分析區 (K線 + 財報) ---
 if selected_stock:
@@ -110,13 +105,13 @@ if selected_stock:
         # --- A. 專業 K 線圖 ---
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
         
-        # K線
+        # K線 (漲紅跌綠)
         fig.add_trace(go.Candlestick(
             x=df_all.index, open=df_all['Open'], high=df_all['High'], low=df_all['Low'], close=df_all['Close'],
             name="K線", increasing_line_color='#FF0000', decreasing_line_color='#00AA00'
         ), row=1, col=1)
         
-        # 均線配色 (對齊截圖)
+        # 均線配色 (黃、藍、紫、綠、白)
         ma_colors = {'MA5': '#FFD700', 'MA10': '#00BFFF', 'MA20': '#FF00FF', 'MA60': '#00FF00', 'MA120': '#FFFFFF'}
         for ma, color in ma_colors.items():
             fig.add_trace(go.Scatter(x=df_all.index, y=df_all[ma], name=ma, line=dict(color=color, width=1.2)), row=1, col=1)
@@ -128,38 +123,34 @@ if selected_stock:
         fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=30, b=10))
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- B. 財務報表區 ---
+        # --- B. 財務報表區 (獲利能力) ---
         st.header(f"📊 獲利能力分析：{get_stock_name(selected_stock)}")
         
         try:
-            # 抓取季度損益表 (yfinance 新版建議用 quarterly_income_stmt)
             q_fin = stock_obj.quarterly_income_stmt.T
             if not q_fin.empty:
                 profit_df = pd.DataFrame(index=q_fin.index)
                 rev = q_fin.get('Total Revenue', 0)
-                gp = q_fin.get('Gross Profit', 0)
-                op = q_fin.get('Operating Income', 0)
-                ni = q_fin.get('Net Income', 0)
                 
-                profit_df['毛利率(%)'] = (gp / rev * 100).round(2)
-                profit_df['營益率(%)'] = (op / rev * 100).round(2)
-                profit_df['淨利率(%)'] = (ni / rev * 100).round(2)
+                profit_df['毛利率(%)'] = (q_fin.get('Gross Profit', 0) / rev * 100).round(2)
+                profit_df['營益率(%)'] = (q_fin.get('Operating Income', 0) / rev * 100).round(2)
+                profit_df['稅前淨利率(%)'] = (q_fin.get('Pretax Income', 0) / rev * 100).round(2)
+                profit_df['稅後淨利率(%)'] = (q_fin.get('Net Income Common Stockholders', 0) / rev * 100).round(2)
                 
-                # 嘗試抓取 EPS
                 if 'Basic EPS' in q_fin.columns:
                     profit_df['EPS(元)'] = q_fin['Basic EPS'].round(2)
-                else:
-                    profit_df['EPS(元)'] = "N/A"
                 
-                st.subheader("💡 獲利能力 (按季度)")
-                st.table(profit_df.head(6))
+                # 格式化索引為季度 (例如 2024-09-30)
+                profit_df.index = [d.strftime('%Y-%m') for d in profit_df.index]
                 
-                # 營收走勢
+                st.subheader("💡 獲利能力表 (按季度對照)")
+                st.table(profit_df.head(8))
+                
                 st.subheader("📈 營收走勢 (按季度)")
-                rev_display = pd.DataFrame(index=q_fin.index)
-                rev_display['季度營收'] = rev
-                rev_display['年增率(YoY %)'] = rev_display['季度營收'].pct_change(-4).round(4) * 100
-                st.table(rev_display.head(6).style.format({"季度營收": "{:,.0f}"}))
+                rev_display = pd.DataFrame(index=profit_df.index)
+                rev_display['季度營收'] = rev.values[:len(profit_df)]
+                rev_display['年增率(YoY %)'] = (pd.Series(rev.values).pct_change(-4).values[:len(profit_df)] * 100).round(2)
+                st.table(rev_display.head(8).style.format({"季度營收": "{:,.0f}"}))
             else:
                 st.warning("此標的無公開季度財報數據。")
         except:
