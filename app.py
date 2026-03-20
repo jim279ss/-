@@ -27,14 +27,13 @@ def get_stock_name(ticker):
 
 # --- 2. 側邊欄：持股管理 ---
 st.sidebar.header("👤 個人持股管理")
-my_input = st.sidebar.text_input("輸入股票代碼 (多筆用逗號隔開)", "2330, 3017, 3450, NVDA")
+my_input = st.sidebar.text_input("輸入股票代碼 (多筆用逗號隔開)", "2330, 3017, 3450, NVDA, 00679B")
 
 # 處理輸入代碼
 processed_my_stocks = []
 for s in my_input.split(","):
     s = s.strip().upper()
     if not s: continue
-    # 台股補全：純數字或 00 開頭補 .TW
     if s.isdigit() or (len(s) >= 4 and s[0:2] == "00"):
         if ".TW" not in s: s = f"{s}.TW"
     processed_my_stocks.append(s)
@@ -110,14 +109,63 @@ if selected_stock:
 
         # --- A. 專業 K 線圖 ---
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
+        
+        # K線
         fig.add_trace(go.Candlestick(
             x=df_all.index, open=df_all['Open'], high=df_all['High'], low=df_all['Low'], close=df_all['Close'],
             name="K線", increasing_line_color='#FF0000', decreasing_line_color='#00AA00'
         ), row=1, col=1)
         
+        # 均線配色 (對齊截圖)
         ma_colors = {'MA5': '#FFD700', 'MA10': '#00BFFF', 'MA20': '#FF00FF', 'MA60': '#00FF00', 'MA120': '#FFFFFF'}
         for ma, color in ma_colors.items():
             fig.add_trace(go.Scatter(x=df_all.index, y=df_all[ma], name=ma, line=dict(color=color, width=1.2)), row=1, col=1)
         
+        # 成交量 (漲紅跌綠)
         vol_colors = ['#FF0000' if df_all['Close'].iloc[i] >= df_all['Open'].iloc[i] else '#00AA00' for i in range(len(df_all))]
-        fig.add_trace(go.Bar(x=df_all.index, y=df_all['Volume'], name="成交量", marker_col
+        fig.add_trace(go.Bar(x=df_all.index, y=df_all['Volume'], name="成交量", marker_color=vol_colors), row=2, col=1)
+        
+        fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=30, b=10))
+        st.plotly_chart(fig, use_container_width=True)
+
+        # --- B. 財務報表區 ---
+        st.header(f"📊 獲利能力分析：{get_stock_name(selected_stock)}")
+        
+        try:
+            # 抓取季度損益表 (yfinance 新版建議用 quarterly_income_stmt)
+            q_fin = stock_obj.quarterly_income_stmt.T
+            if not q_fin.empty:
+                profit_df = pd.DataFrame(index=q_fin.index)
+                rev = q_fin.get('Total Revenue', 0)
+                gp = q_fin.get('Gross Profit', 0)
+                op = q_fin.get('Operating Income', 0)
+                ni = q_fin.get('Net Income', 0)
+                
+                profit_df['毛利率(%)'] = (gp / rev * 100).round(2)
+                profit_df['營益率(%)'] = (op / rev * 100).round(2)
+                profit_df['淨利率(%)'] = (ni / rev * 100).round(2)
+                
+                # 嘗試抓取 EPS
+                if 'Basic EPS' in q_fin.columns:
+                    profit_df['EPS(元)'] = q_fin['Basic EPS'].round(2)
+                else:
+                    profit_df['EPS(元)'] = "N/A"
+                
+                st.subheader("💡 獲利能力 (按季度)")
+                st.table(profit_df.head(6))
+                
+                # 營收走勢
+                st.subheader("📈 營收走勢 (按季度)")
+                rev_display = pd.DataFrame(index=q_fin.index)
+                rev_display['季度營收'] = rev
+                rev_display['年增率(YoY %)'] = rev_display['季度營收'].pct_change(-4).round(4) * 100
+                st.table(rev_display.head(6).style.format({"季度營收": "{:,.0f}"}))
+            else:
+                st.warning("此標的無公開季度財報數據。")
+        except:
+            st.write("財報數據解析中或暫無資料。")
+    else:
+        st.error("無法載入 K 線資料。")
+
+st.sidebar.markdown("---")
+st.sidebar.write("🔴 **紅漲** | 🟢 **綠跌**")
