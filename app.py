@@ -15,13 +15,10 @@ st.set_page_config(page_title="AI 供應鏈投資決策系統", layout="wide")
 STOCK_MAP = {
     "NVDA": "NVIDIA", "TSM": "台積電ADR", "^SOX": "費城半導體",
     "2330.TW": "台積電", "2317.TW": "鴻海", "3017.TW": "奇鋐", "3450.TW": "聯鈞",
-    # NVIDIA GB200 核心供應鏈
     "2382.TW": "廣達", "6669.TW": "緯穎", "2308.TW": "台達電", "3013.TW": "晟銘電",
     "3324.TW": "雙鴻", "2421.TW": "建準", "2059.TW": "川湖", "6274.TW": "台燿",
     "2368.TW": "金像電", "3533.TW": "嘉澤", "6213.TW": "聯茂", "2376.TW": "技嘉",
-    # 設備與測試 (CoWoS)
     "3583.TW": "辛耘", "6187.TW": "萬潤", "3131.TW": "弘塑", "6223.TW": "旺矽",
-    # 矽光子 (CPO)
     "3363.TW": "上詮", "6442.TW": "光聖", "3163.TW": "波若威", "4979.TW": "華星光", "3081.TW": "聯亞"
 }
 
@@ -35,21 +32,23 @@ def get_stock_name(ticker):
         return name
     except: return ticker
 
-# --- 2. 新聞抓取功能 ---
+# --- 2. 新聞抓取功能 (加入錯誤檢查) ---
 def get_latest_news():
-    # 抓取 Yahoo Finance 台灣財經新聞 RSS
     rss_url = "https://tw.stock.yahoo.com/rss/economy"
-    feed = feedparser.parse(rss_url)
-    news_list = []
-    for entry in feed.entries[:5]: # 抓取前 5 篇
-        # 嘗試從新聞標題中提取 4 位數台股代碼
-        codes = re.findall(r'\d{4}', entry.title)
-        news_list.append({
-            "標題": entry.title,
-            "連結": entry.link,
-            "相關代碼": codes
-        })
-    return news_list
+    try:
+        feed = feedparser.parse(rss_url)
+        news_list = []
+        if feed.entries:
+            for entry in feed.entries[:4]: # 抓取前 4 篇
+                codes = re.findall(r'\d{4}', entry.title)
+                news_list.append({
+                    "標題": entry.title,
+                    "連結": entry.link,
+                    "相關代碼": codes
+                })
+        return news_list
+    except:
+        return []
 
 # --- 3. 側邊欄：持股管理 ---
 st.sidebar.header("👤 個人持股管理")
@@ -112,21 +111,25 @@ def analyze_stock(ticker):
 # --- 5. 主介面 ---
 st.title("🚀 AI 供應鏈投資決策系統")
 
-# --- 新增：最新財報與題材新聞 ---
+# --- 修正後的新聞區塊 ---
 st.subheader("📰 最新題材新聞 (自動偵測個股)")
 news_data = get_latest_news()
-n_cols = st.columns(len(news_data))
-for i, n in enumerate(news_data):
-    with n_cols[i]:
-        st.markdown(f"**[{n['標題']}]({n['連結']})**")
-        if n['相關代碼']:
-            st.caption(f"提及個股: {', '.join(n['相關代碼'])}")
-            if st.button(f"追蹤 {n['相關代碼'][0]}", key=f"news_btn_{i}"):
-                st.session_state.global_target = f"{n['相關代碼'][0]}.TW"
+
+if news_data:
+    n_cols = st.columns(len(news_data))
+    for i, n in enumerate(news_data):
+        with n_cols[i]:
+            st.markdown(f"**[{n['標題']}]({n['連結']})**")
+            if n['相關代碼']:
+                st.caption(f"提及個股: {', '.join(n['相關代碼'])}")
+                if st.button(f"分析 {n['相關代碼'][0]}", key=f"news_btn_{i}"):
+                    st.session_state.global_target = f"{n['相關代碼'][0]}.TW"
+else:
+    st.info("暫無最新新聞，請稍後再試。")
 
 st.divider()
 
-# 定義族群 (更新 NVIDIA 最新供應鏈)
+# 定義族群
 WATCHLIST = {
     "我的持股": processed_my_stocks,
     "NVIDIA GB200 核心": ["2317.TW", "2382.TW", "6669.TW", "2308.TW", "3013.TW", "3324.TW", "3017.TW"],
@@ -155,8 +158,11 @@ for i, cat in enumerate(WATCHLIST.keys()):
 st.divider()
 if 'global_target' not in st.session_state: st.session_state.global_target = "2330.TW"
 unique_tickers = list(dict.fromkeys(all_tickers))
+if st.session_state.global_target not in unique_tickers:
+    unique_tickers.insert(0, st.session_state.global_target)
+
 target = st.selectbox("🎯 選擇分析標的：", unique_tickers, 
-                      index=unique_tickers.index(st.session_state.global_target) if st.session_state.global_target in unique_tickers else 0,
+                      index=0,
                       format_func=lambda x: f"{x} {get_stock_name(x)}")
 
 if target:
