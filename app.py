@@ -27,15 +27,16 @@ def get_stock_name(ticker):
 
 # --- 2. 側邊欄：持股管理 ---
 st.sidebar.header("👤 個人持股管理")
-my_input = st.sidebar.text_input("輸入股票代碼 (多筆用逗號隔開)", "2330, 3017, 3450, 00679B")
+my_input = st.sidebar.text_input("輸入股票代碼 (多筆用逗號隔開)", "2330, 3017, 3450, NVDA")
 
-# 處理輸入代碼：如果是純數字或特定代碼則補上 .TW
+# 處理輸入代碼
 processed_my_stocks = []
 for s in my_input.split(","):
     s = s.strip().upper()
     if not s: continue
-    if s.isdigit() or (len(s) >= 5 and s[0:2].isdigit()): # 處理 2330 或 00679B
-        s = f"{s}.TW"
+    # 台股補全：純數字或 00 開頭補 .TW
+    if s.isdigit() or (len(s) >= 4 and s[0:2] == "00"):
+        if ".TW" not in s: s = f"{s}.TW"
     processed_my_stocks.append(s)
 
 # --- 3. 核心功能函數 ---
@@ -48,7 +49,6 @@ def fetch_stock_data(ticker):
 # --- 4. 主介面 ---
 st.title("🚀 AI 供應鏈決策系統")
 
-# 族群定義
 WATCHLIST = {
     "我的持股": processed_my_stocks,
     "AI 核心指標": ["^SOX", "NVDA", "TSM", "2330.TW"],
@@ -64,14 +64,14 @@ for i, cat in enumerate(WATCHLIST.keys()):
     with tabs[i]:
         tickers = WATCHLIST[cat]
         if not tickers:
-            st.write("請在左側輸入持股代碼")
+            st.info("請在左側輸入持股代碼 (例如: 2330, 3017)")
             continue
             
-        # 簡易清單表格
         summary_data = []
         for t in tickers:
             try:
                 s_obj, s_hist = fetch_stock_data(t)
+                if s_hist.empty: continue
                 curr = s_hist['Close'].iloc[-1]
                 prev = s_hist['Close'].iloc[-2]
                 pct = ((curr - prev) / prev) * 100
@@ -85,82 +85,39 @@ for i, cat in enumerate(WATCHLIST.keys()):
         
         df_summary = pd.DataFrame(summary_data)
         
-        def color_pct(v):
-            if v > 0: return 'color: #FF0000; font-weight: bold'
-            if v < 0: return 'color: #00AA00; font-weight: bold'
-            return ''
-        
-        st.dataframe(df_summary.style.applymap(color_pct, subset=['漲跌幅(%)']), use_container_width=True, hide_index=True)
-        selected_stock = st.selectbox(f"選擇分析標的 ({cat})", tickers, format_func=lambda x: f"{x} {get_stock_name(x)}", key=f"sb_{cat}")
+        if not df_summary.empty:
+            def color_pct(v):
+                if v > 0: return 'color: #FF0000; font-weight: bold'
+                if v < 0: return 'color: #00AA00; font-weight: bold'
+                return ''
+            
+            st.dataframe(df_summary.style.applymap(color_pct, subset=['漲跌幅(%)']), use_container_width=True, hide_index=True)
+            selected_stock_in_tab = st.selectbox(f"選擇分析標的 ({cat})", tickers, format_func=lambda x: f"{x} {get_stock_name(x)}", key=f"sb_{cat}")
+            if selected_stock_in_tab:
+                selected_stock = selected_stock_in_tab
+        else:
+            st.warning("查無資料，請確認代碼是否正確。")
 
 # --- 5. 詳細分析區 (K線 + 財報) ---
 if selected_stock:
     st.divider()
     stock_obj, df_all = fetch_stock_data(selected_stock)
     
-    # 計算均線
-    df_all['MA5'] = df_all['Close'].rolling(5).mean()
-    df_all['MA10'] = df_all['Close'].rolling(10).mean()
-    df_all['MA20'] = df_all['Close'].rolling(20).mean()
-    df_all['MA60'] = df_all['Close'].rolling(60).mean()
-    df_all['MA120'] = df_all['Close'].rolling(120).mean()
+    if not df_all.empty:
+        # 計算均線
+        for ma in [5, 10, 20, 60, 120]:
+            df_all[f'MA{ma}'] = df_all['Close'].rolling(ma).mean()
 
-    # --- A. 專業 K 線圖 ---
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
-    
-    # K線
-    fig.add_trace(go.Candlestick(
-        x=df_all.index, open=df_all['Open'], high=df_all['High'], low=df_all['Low'], close=df_all['Close'],
-        name="K線", increasing_line_color='#FF0000', decreasing_line_color='#00AA00'
-    ), row=1, col=1)
-    
-    # 均線配色 (對齊截圖)
-    ma_colors = {'MA5': '#FFD700', 'MA10': '#00BFFF', 'MA20': '#FF00FF', 'MA60': '#00FF00', 'MA120': '#FFFFFF'}
-    for ma, color in ma_colors.items():
-        fig.add_trace(go.Scatter(x=df_all.index, y=df_all[ma], name=ma, line=dict(color=color, width=1.5)), row=1, col=1)
-    
-    # 成交量 (漲紅跌綠)
-    colors = ['#FF0000' if df_all['Close'].iloc[i] >= df_all['Open'].iloc[i] else '#00AA00' for i in range(len(df_all))]
-    fig.add_trace(go.Bar(x=df_all.index, y=df_all['Volume'], name="成交量", marker_color=colors), row=2, col=1)
-    
-    fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=30, b=10))
-    st.plotly_chart(fig, use_container_width=True)
-
-    # --- B. 財務報表區 ---
-    st.header(f"📊 財務分析：{get_stock_name(selected_stock)}")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("獲利能力 (季度)")
-        try:
-            q_fin = stock_obj.quarterly_financials.T
-            q_bs = stock_obj.quarterly_balance_sheet.T
-            
-            # 計算比率
-            profit_df = pd.DataFrame(index=q_fin.index)
-            rev = q_fin.get('Total Revenue', 1)
-            profit_df['毛利率(%)'] = (q_fin.get('Gross Profit', 0) / rev * 100).round(2)
-            profit_df['營益率(%)'] = (q_fin.get('Operating Income', 0) / rev * 100).round(2)
-            profit_df['淨利率(%)'] = (q_fin.get('Net Income Common Stockholders', 0) / rev * 100).round(2)
-            profit_df['EPS'] = stock_obj.quarterly_earnings.iloc[:,0].values if hasattr(stock_obj, 'quarterly_earnings') else "N/A"
-            
-            st.dataframe(profit_df.head(6), use_container_width=True)
-        except:
-            st.write("暫無獲利能力數據")
-
-    with col2:
-        st.subheader("營收走勢 (季度)")
-        try:
-            rev_df = pd.DataFrame(index=q_fin.index)
-            rev_df['季度營收'] = q_fin.get('Total Revenue', 0)
-            rev_df['年增率(YoY)'] = rev_df['季度營收'].pct_change(-4).round(4) * 100 # 與去年同季比
-            
-            st.dataframe(rev_df.head(6).style.format({"季度營收": "{:,.0f}"}), use_container_width=True)
-        except:
-            st.write("暫無營收數據")
-
-st.sidebar.markdown("---")
-st.sidebar.write("💡 **操作提示**：")
-st.sidebar.write("1. 輸入代碼如 `2330` 或 `NVDA`。")
-st.sidebar.write("2. 下方表格點選股票後，會自動載入 K 線與財報。")
+        # --- A. 專業 K 線圖 ---
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
+        fig.add_trace(go.Candlestick(
+            x=df_all.index, open=df_all['Open'], high=df_all['High'], low=df_all['Low'], close=df_all['Close'],
+            name="K線", increasing_line_color='#FF0000', decreasing_line_color='#00AA00'
+        ), row=1, col=1)
+        
+        ma_colors = {'MA5': '#FFD700', 'MA10': '#00BFFF', 'MA20': '#FF00FF', 'MA60': '#00FF00', 'MA120': '#FFFFFF'}
+        for ma, color in ma_colors.items():
+            fig.add_trace(go.Scatter(x=df_all.index, y=df_all[ma], name=ma, line=dict(color=color, width=1.2)), row=1, col=1)
+        
+        vol_colors = ['#FF0000' if df_all['Close'].iloc[i] >= df_all['Open'].iloc[i] else '#00AA00' for i in range(len(df_all))]
+        fig.add_trace(go.Bar(x=df_all.index, y=df_all['Volume'], name="成交量", marker_col
