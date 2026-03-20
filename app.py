@@ -9,17 +9,21 @@ import feedparser
 import re
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="AI 供應鏈投資決策系統", layout="wide")
+st.set_page_config(page_title="AI 高毛利供應鏈決策系統", layout="wide")
 
-# --- 1. 股票名稱對照表 (含最新 GB200 供應鏈) ---
+# --- 1. 擴充版股票名稱對照表 (確保 100% 中文) ---
 STOCK_MAP = {
-    "NVDA": "NVIDIA", "TSM": "台積電ADR", "^SOX": "費城半導體",
     "2330.TW": "台積電", "2317.TW": "鴻海", "3017.TW": "奇鋐", "3450.TW": "聯鈞",
-    "2382.TW": "廣達", "6669.TW": "緯穎", "2308.TW": "台達電", "3013.TW": "晟銘電",
-    "3324.TW": "雙鴻", "2421.TW": "建準", "2059.TW": "川湖", "6274.TW": "台燿",
-    "2368.TW": "金像電", "3533.TW": "嘉澤", "6213.TW": "聯茂", "2376.TW": "技嘉",
-    "3583.TW": "辛耘", "6187.TW": "萬潤", "3131.TW": "弘塑", "6223.TW": "旺矽",
-    "3363.TW": "上詮", "6442.TW": "光聖", "3163.TW": "波若威", "4979.TW": "華星光", "3081.TW": "聯亞"
+    "2312.TW": "金寶", "2409.TW": "友達", "2520.TW": "冠德", "2609.TW": "陽明",
+    "2634.TW": "漢翔", "2890.TW": "永豐金", "3051.TW": "鴻名", "3062.TW": "建漢",
+    "4906.TW": "正文", "2382.TW": "廣達", "6669.TW": "緯穎", "2308.TW": "台達電",
+    "3013.TW": "晟銘電", "3324.TW": "雙鴻", "2421.TW": "建準", "2059.TW": "川湖",
+    "6274.TW": "台燿", "2368.TW": "金像電", "3533.TW": "嘉澤", "6213.TW": "聯茂",
+    "3661.TW": "世芯-KY", "3443.TW": "創意", "6643.TW": "M31", "3529.TW": "力旺",
+    "2454.TW": "聯發科", "3363.TW": "上詮", "6442.TW": "光聖", "3163.TW": "波若威",
+    "4979.TW": "華星光", "8299.TW": "群聯", "2408.TW": "南亞科", "3037.TW": "欣興",
+    "3189.TW": "景碩", "8046.TW": "南電", "6223.TW": "旺矽", "3583.TW": "辛耘",
+    "NVDA": "NVIDIA", "TSM": "台積電ADR", "^SOX": "費城半導體"
 }
 
 def get_stock_name(ticker):
@@ -27,60 +31,40 @@ def get_stock_name(ticker):
     try:
         s = yf.Ticker(ticker)
         name = s.info.get('shortName', ticker)
-        for suffix in [" CORPORATION", " CO LTD", " INC.", " TECHNOLOGY"]:
+        for suffix in [" CORPORATION", " CO LTD", " INC.", " TECHNOLOGY", " ELECTRONICS"]:
             name = name.upper().replace(suffix, "")
         return name
     except: return ticker
 
-# --- 2. 新聞抓取功能 (加入錯誤檢查) ---
+# --- 2. 新聞抓取功能 ---
 def get_latest_news():
-    rss_url = "https://tw.stock.yahoo.com/rss/economy"
     try:
-        feed = feedparser.parse(rss_url)
-        news_list = []
-        if feed.entries:
-            for entry in feed.entries[:4]: # 抓取前 4 篇
-                codes = re.findall(r'\d{4}', entry.title)
-                news_list.append({
-                    "標題": entry.title,
-                    "連結": entry.link,
-                    "相關代碼": codes
-                })
-        return news_list
-    except:
-        return []
+        feed = feedparser.parse("https://tw.stock.yahoo.com/rss/economy")
+        return [{"標題": e.title, "連結": e.link, "代碼": re.findall(r'\d{4}', e.title)} for e in feed.entries[:4]]
+    except: return []
 
-# --- 3. 側邊欄：持股管理 ---
-st.sidebar.header("👤 個人持股管理")
-query_params = st.query_params
-default_stocks = query_params.get("stocks", "2330, 3017, 3450, NVDA")
-my_input = st.sidebar.text_input("輸入股票代碼 (逗號隔開)", default_stocks)
-
-if st.sidebar.button("💾 產生我的專屬記憶連結"):
-    st.query_params["stocks"] = my_input
-    st.sidebar.success("連結已產生！請將網址加入書籤。")
-
-processed_my_stocks = []
-for s in my_input.split(","):
-    s = s.strip().upper()
-    if not s: continue
-    if s.isdigit() or (len(s) >= 4 and s[0:2] == "00"):
-        if ".TW" not in s: s = f"{s}.TW"
-    processed_my_stocks.append(s)
-
-# --- 4. 核心分析函數 ---
+# --- 3. 核心分析函數 (含毛利率偵測) ---
 @st.cache_data(ttl=3600)
 def analyze_stock(ticker):
     try:
         stock = yf.Ticker(ticker)
         df = stock.history(period="150d")
-        if len(df) < 60: return None
+        if df.empty: return None
+        
+        # 技術面
         curr_price = df['Close'].iloc[-1]
-        prev_price = df['Close'].iloc[-2]
-        pct = ((curr_price - prev_price) / prev_price) * 100
+        pct = ((curr_price - df['Close'].iloc[-2]) / df['Close'].iloc[-2]) * 100
         ma5 = df['Close'].rolling(5).mean().iloc[-1]
         low_60 = df['Close'].tail(60).min()
         
+        # 財報面 (毛利率)
+        margin = 0
+        try:
+            q_fin = stock.quarterly_income_stmt.T
+            margin = (q_fin['Gross Profit'].iloc[0] / q_fin['Total Revenue'].iloc[0]) * 100
+        except: margin = 0
+
+        # 籌碼面
         chip_sum = 0
         if ".TW" in ticker:
             dl = DataLoader()
@@ -93,50 +77,56 @@ def analyze_stock(ticker):
                 chip_sum = (chip_df.tail(9)['buy'].sum() - chip_df.tail(9)['sell'].sum()) / 1000
 
         is_bottom = curr_price < (low_60 * 1.12)
+        high_margin = "💎" if margin > 30 else ""
+        
         if is_bottom and curr_price > ma5 and chip_sum > 0: signal = "🔥 底部起漲"
         elif curr_price > ma5 and chip_sum > 0: signal = "🚀 多頭續強"
         elif curr_price < ma5 and chip_sum < 0: signal = "❄️ 轉弱觀望"
         else: signal = "☁️ 區間震盪"
 
         return {
-            "股票標的": f"{ticker.replace('.TW','')} {get_stock_name(ticker)}",
+            "股票標的": f"{high_margin}{get_stock_name(ticker)}",
             "現價": round(curr_price, 2),
             "漲跌幅(%)": round(pct, 2),
+            "毛利率(%)": round(margin, 1),
             "籌碼(K)": round(chip_sum, 1),
             "買賣建議": signal,
             "ticker": ticker
         }
     except: return None
 
-# --- 5. 主介面 ---
-st.title("🚀 AI 供應鏈投資決策系統")
+# --- 4. 主介面 ---
+st.title("🚀 AI 高毛利供應鏈決策系統")
 
-# --- 修正後的新聞區塊 ---
-st.subheader("📰 最新題材新聞 (自動偵測個股)")
-news_data = get_latest_news()
+# 新聞區
+news = get_latest_news()
+if news:
+    cols = st.columns(len(news))
+    for i, n in enumerate(news):
+        cols[i].markdown(f"**[{n['標題']}]({n['連結']})**")
 
-if news_data:
-    n_cols = st.columns(len(news_data))
-    for i, n in enumerate(news_data):
-        with n_cols[i]:
-            st.markdown(f"**[{n['標題']}]({n['連結']})**")
-            if n['相關代碼']:
-                st.caption(f"提及個股: {', '.join(n['相關代碼'])}")
-                if st.button(f"分析 {n['相關代碼'][0]}", key=f"news_btn_{i}"):
-                    st.session_state.global_target = f"{n['相關代碼'][0]}.TW"
-else:
-    st.info("暫無最新新聞，請稍後再試。")
+st.sidebar.header("👤 個人持股管理")
+query_params = st.query_params
+default_stocks = query_params.get("stocks", "2330, 3017, 3450, NVDA")
+my_input = st.sidebar.text_input("輸入代碼 (逗號隔開)", default_stocks)
+if st.sidebar.button("💾 記憶持股連結"):
+    st.query_params["stocks"] = my_input
+    st.sidebar.success("已產生記憶連結，請加入書籤")
 
-st.divider()
+processed_stocks = []
+for s in my_input.split(","):
+    s = s.strip().upper()
+    if s.isdigit() and ".TW" not in s: s = f"{s}.TW"
+    processed_stocks.append(s)
 
-# 定義族群
+# 最新產品線分類
 WATCHLIST = {
-    "我的持股": processed_my_stocks,
-    "NVIDIA GB200 核心": ["2317.TW", "2382.TW", "6669.TW", "2308.TW", "3013.TW", "3324.TW", "3017.TW"],
+    "我的持股": processed_stocks,
+    "GB200 液冷/機櫃": ["3017.TW", "3324.TW", "3013.TW", "2421.TW", "2308.TW", "2301.TW"],
+    "GB200 組裝/PCB": ["2317.TW", "2382.TW", "6669.TW", "6274.TW", "2368.TW", "6213.TW"],
     "CoWoS/先進封裝": ["3583.TW", "6187.TW", "3131.TW", "6223.TW", "2330.TW"],
-    "IC設計/IP": ["3661.TW", "3443.TW", "2454.TW", "6643.TW", "3529.TW"],
-    "矽光子/CPO": ["3450.TW", "3363.TW", "6442.TW", "3163.TW", "4979.TW"],
-    "記憶體/載板": ["8299.TW", "2408.TW", "3260.TW", "3037.TW", "3189.TW"]
+    "矽光子/CPO": ["3450.TW", "3363.TW", "6442.TW", "3163.TW", "4979.TW", "3081.TW"],
+    "IC設計/IP (高毛利)": ["3661.TW", "3443.TW", "2454.TW", "6643.TW", "3529.TW"]
 }
 
 tabs = st.tabs(list(WATCHLIST.keys()))
@@ -145,27 +135,18 @@ all_tickers = []
 for i, cat in enumerate(WATCHLIST.keys()):
     with tabs[i]:
         results = [analyze_stock(t) for t in WATCHLIST[cat] if analyze_stock(t)]
-        df_summary = pd.DataFrame(results)
-        if not df_summary.empty:
-            def color_signal(v):
-                if "買入" in v or "起漲" in v or "續強" in v: return 'color: #FF0000; font-weight: bold'
-                if "賣出" in v or "轉弱" in v: return 'color: #00FF00; font-weight: bold'
-                return ''
-            st.dataframe(df_summary.style.applymap(color_signal, subset=['買賣建議']), use_container_width=True, hide_index=True)
+        df = pd.DataFrame(results)
+        if not df.empty:
+            st.dataframe(df.style.applymap(lambda v: 'color: #FF0000' if "買入" in str(v) or "起漲" in str(v) else ('color: #00FF00' if "賣出" in str(v) else ''), subset=['買賣建議']), use_container_width=True, hide_index=True)
             all_tickers.extend(WATCHLIST[cat])
 
-# --- 6. 深度分析區 ---
+# --- 5. 深度分析區 (確保不消失) ---
 st.divider()
-if 'global_target' not in st.session_state: st.session_state.global_target = "2330.TW"
 unique_tickers = list(dict.fromkeys(all_tickers))
-if st.session_state.global_target not in unique_tickers:
-    unique_tickers.insert(0, st.session_state.global_target)
-
-target = st.selectbox("🎯 選擇分析標的：", unique_tickers, 
-                      index=0,
-                      format_func=lambda x: f"{x} {get_stock_name(x)}")
+target = st.selectbox("🎯 選擇分析標的：", unique_tickers, format_func=lambda x: f"{x} {get_stock_name(x)}")
 
 if target:
+    st.header(f"🔍 深度分析：{get_stock_name(target)}")
     s_obj = yf.Ticker(target)
     df_all = s_obj.history(period="1y")
     if not df_all.empty:
@@ -175,28 +156,3 @@ if target:
         ma_colors = {'MA5': '#FFD700', 'MA10': '#00BFFF', 'MA20': '#FF00FF', 'MA60': '#00FF00', 'MA120': '#FFFFFF'}
         for ma, color in ma_colors.items(): fig.add_trace(go.Scatter(x=df_all.index, y=df_all[ma], name=ma, line=dict(color=color, width=1.2)), row=1, col=1)
         vol_colors = ['#FF0000' if df_all['Close'].iloc[i] >= df_all['Open'].iloc[i] else '#00AA00' for i in range(len(df_all))]
-        fig.add_trace(go.Bar(x=df_all.index, y=df_all['Volume'], name="成交量", marker_color=vol_colors), row=2, col=1)
-        fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=30, b=10))
-        st.plotly_chart(fig, use_container_width=True)
-
-        try:
-            q_fin = s_obj.quarterly_income_stmt.T
-            if not q_fin.empty:
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.subheader("📊 獲利能力")
-                    p_df = pd.DataFrame(index=q_fin.index)
-                    rev = q_fin.get('Total Revenue', 0)
-                    p_df['毛利率(%)'] = (q_fin.get('Gross Profit', 0) / rev * 100).round(2)
-                    p_df['營益率(%)'] = (q_fin.get('Operating Income', 0) / rev * 100).round(2)
-                    if 'Basic EPS' in q_fin.columns: p_df['EPS'] = q_fin['Basic EPS'].round(2)
-                    p_df.index = [d.strftime('%Y-Q%q') for d in p_df.index]
-                    st.table(p_df.head(4))
-                with c2:
-                    st.subheader("📈 營收走勢")
-                    r_df = pd.DataFrame(index=q_fin.index)
-                    r_df['季度營收'] = rev
-                    r_df['YoY %'] = r_df['季度營收'].pct_change(-4).round(4) * 100
-                    r_df.index = [d.strftime('%Y-Q%q') for d in r_df.index]
-                    st.table(r_df.head(4).style.format({"季度營收": "{:,.0f}"}))
-        except: st.write("財報讀取中...")
