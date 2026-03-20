@@ -5,3 +5,5 @@ plotly
 FinMind
 tqdm
 requests
+jinja2
+matplotlib
