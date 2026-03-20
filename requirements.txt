@@ -7,3 +7,4 @@ tqdm
 requests
 jinja2
 matplotlib
+numpy
