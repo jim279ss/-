@@ -156,3 +156,28 @@ if target:
         ma_colors = {'MA5': '#FFD700', 'MA10': '#00BFFF', 'MA20': '#FF00FF', 'MA60': '#00FF00', 'MA120': '#FFFFFF'}
         for ma, color in ma_colors.items(): fig.add_trace(go.Scatter(x=df_all.index, y=df_all[ma], name=ma, line=dict(color=color, width=1.2)), row=1, col=1)
         vol_colors = ['#FF0000' if df_all['Close'].iloc[i] >= df_all['Open'].iloc[i] else '#00AA00' for i in range(len(df_all))]
+        fig.add_trace(go.Bar(x=df_all.index, y=df_all['Volume'], name="成交量", marker_color=vol_colors), row=2, col=1)
+        fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=30, b=10))
+        st.plotly_chart(fig, use_container_width=True)
+        
+        try:
+            q_fin = s_obj.quarterly_income_stmt.T
+            if not q_fin.empty:
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.subheader("📊 獲利能力")
+                    p_df = pd.DataFrame(index=q_fin.index)
+                    rev = q_fin.get('Total Revenue', 0)
+                    p_df['毛利率(%)'] = (q_fin.get('Gross Profit', 0) / rev * 100).round(2)
+                    p_df['營益率(%)'] = (q_fin.get('Operating Income', 0) / rev * 100).round(2)
+                    if 'Basic EPS' in q_fin.columns: p_df['EPS'] = q_fin['Basic EPS'].round(2)
+                    p_df.index = [d.strftime('%Y-Q%q') for d in p_df.index]
+                    st.table(p_df.head(4))
+                with c2:
+                    st.subheader("📈 營收走勢")
+                    r_df = pd.DataFrame(index=q_fin.index)
+                    r_df['季度營收'] = rev
+                    r_df['YoY %'] = r_df['季度營收'].pct_change(-4).round(4) * 100
+                    r_df.index = [d.strftime('%Y-Q%q') for d in r_df.index]
+                    st.table(r_df.head(4).style.format({"季度營收": "{:,.0f}"}))
+        except: st.write("財報讀取中...")
